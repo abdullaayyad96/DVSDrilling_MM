@@ -14,13 +14,13 @@ class MissionManagement:
         self.ros_node = rospy.init_node('3DVS_Manager', anonymous=True)
 
         #define ROS Publisher and Subscriber
-        self.pose_ur_pub = rospy.Publisher('/ur_cmd_pose', geo_msg.Pose, queue_size=10 )
-        self.adjust_pose_ur_pub = rospy.Publisher('/ur_cmd_adjust_pose', geo_msg.Pose, queue_size=10 )
-        self.vel_ur_pub  = rospy.Publisher('/ur_cmd_vel', geo_msg.Twist, queue_size=10 )
+        self.pose_ur_pub = rospy.Publisher('/ur_cmd_pose', geo_msg.Pose, queue_size=1 )
+        self.adjust_pose_ur_pub = rospy.Publisher('/ur_cmd_adjust_pose', geo_msg.Pose, queue_size=1 )
+        self.vel_ur_pub  = rospy.Publisher('/ur_cmd_vel', geo_msg.Twist, queue_size=1 )
         self.Hole_Subscriber = rospy.Subscriber("/hole_pos", my_msg, self.hole_pose_callback)
         self.Plane_Orien_Subscriber = rospy.Subscriber("/plane_oreintation", geo_msg.Quaternion, self.Plane_Orien_callback)
-        self.detection_mode_pub = rospy.Publisher('/detection_mode', Bool, queue_size=10)
-        self.tactile_mode_pub = rospy.Publisher('/tactile_control_mode', Bool, queue_size=10)
+        self.detection_mode_pub = rospy.Publisher('/detection_mode', Bool, queue_size=1)
+        self.tactile_mode_pub = rospy.Publisher('/tactile_control_mode', Bool, queue_size=1)
 
         self.rate = rospy.Rate(100)
 
@@ -30,6 +30,8 @@ class MissionManagement:
         
         self.hole_pose = []
         self.plane_orientation = np.empty((4,1))
+
+        self.tactile_adjusted_pose = geo_msg.Pose()
         
         rospy.spin()
 
@@ -54,7 +56,7 @@ class MissionManagement:
             
             #Velocity Command
             camera_vel_cmd = geo_msg.Twist()
-            camera_vel_cmd.linear.x = 0.02
+            camera_vel_cmd.linear.x = 0.03
             camera_vel_cmd.linear.y = -0.006
             camera_vel_cmd.linear.z = 0
             camera_vel_cmd.angular.x = 0
@@ -100,16 +102,11 @@ class MissionManagement:
         Hole_pose.orientation.w = self.plane_orientation[3]
         self.pose_ur_pub.publish(Hole_pose)
         time.sleep(5)
-        start_tactile = Bool()
-        start_tactile.data = True
-        self.tactile_mode_pub.publish(start_tactile)
-        
-        Tactile_Pose = geo_msg.Pose()
-        Tactile_Pose = rospy.wait_for_message('tactile_mode', geo_msg.Pose, timeout = 30)
-        
-        self.NavigateToHole(Tactile_Pose) 
+        self.achieveTactileContact()
 
-    def NavigateToHole(self, Tactile_Pose):
+        self.NavigateToHole() 
+
+    def NavigateToHole(self):
         
         print("Navigate to Hole Started")
         #Hole Pose
@@ -119,14 +116,18 @@ class MissionManagement:
             Hole_pose.position.x = self.hole_pose[i].x
             Hole_pose.position.y = self.hole_pose[i].y
             Hole_pose.position.z = self.hole_pose[i].z
-            Hole_pose.orientation.x = Tactile_Pose.orientation.x
-            Hole_pose.orientation.y = Tactile_Pose.orientation.y
-            Hole_pose.orientation.z = Tactile_Pose.orientation.z
-            Hole_pose.orientation.w = Tactile_Pose.orientation.w
+            Hole_pose.orientation.x = self.tactile_adjusted_pose.orientation.x
+            Hole_pose.orientation.y = self.tactile_adjusted_pose.orientation.y
+            Hole_pose.orientation.z = self.tactile_adjusted_pose.orientation.z
+            Hole_pose.orientation.w = self.tactile_adjusted_pose.orientation.w
             time.sleep(5)
             self.pose_ur_pub.publish(Hole_pose)
             time.sleep(5)
             self.Start_2DVS()
+            time.sleep(1)
+            self.Adjust_tool_position()
+            time.sleep(3)
+            self.achieveTactileContact()
         
     def Start_2DVS(self):
         start_VS = Bool()
@@ -143,12 +144,10 @@ class MissionManagement:
         start_VS.data = False 
         self.detection_mode_pub.publish(start_VS)
         #print("Servoing Complete: %d", Servoing_complete)
-        self.Adjust_tool_position()
-        time.sleep(3)
 
     def Adjust_tool_position(self):
-        x_correction = 0.006
-        y_correction = -0.058
+        x_correction = -0.0043
+        y_correction = -0.0521
         z_correction = 0 
         Adjust_pose = geo_msg.Pose()
         Adjust_pose.position.x = x_correction
@@ -159,6 +158,14 @@ class MissionManagement:
         Adjust_pose.orientation.z = 0
         Adjust_pose.orientation.w = 1
         self.adjust_pose_ur_pub.publish(Adjust_pose)
+
+    def achieveTactileContact(self):
+        start_tactile = Bool()
+        start_tactile.data = True
+        self.tactile_mode_pub.publish(start_tactile)
+        
+        self.tactile_adjusted_pose = rospy.wait_for_message('tactile_pose', geo_msg.Pose, timeout = 30)
+
 
 if __name__ == '__main__':
     MissionManagement()
